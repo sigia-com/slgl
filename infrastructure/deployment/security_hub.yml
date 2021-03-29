@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  SlackIncomingWebHookURL:
+    Type: 'String'
+    Description: Your unique Incoming Web Hook URL from slack service
+    NoEcho: True
+  SlackChannel:
+    Default: '#alerts'
+    Description: The slack channel to send findings to
+    Type: String
+  MinSeverityLevel:
+    Default: MEDIUM
+    Description: >-
+      The minimum findings severity to send to your slack channel (LOW, MEDIUM
+      or HIGH)
+    Type: String
+    AllowedValues:
+      - LOW
+      - MEDIUM
+      - HIGH
+  CustomActionName:
+    Type: String
+    Default: SendToSlack
+Resources:
+  SecurityHub:
+    Type: 'AWS::SecurityHub::Hub'
+    Properties:
+      Tags:
+        "Stack": !Ref AWS::StackName
+  SecurityHubToSlackRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /service-role/
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess'
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies: []
+  ConfigureSecurityHub:
+    Type: Custom::CustomResource
+    DependsOn: SecurityHub
+    Properties:
+      ServiceToken: !GetAtt 'SecurityHubConfigFunction.Arn'
+  SecurityHubConfigFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Environment:
+        Variables:
+          CustomActionName: !Sub ${CustomActionName}
+          Region: !Sub ${AWS::Region}
+          AWSAccountID: !Sub ${AWS::AccountId}
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import sys
+          import logging
+          import boto3
+          import cfnresponse
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              logger.info('REQUEST RECEIVED:\n {}'.format(event))
+
+              def sendCfnResponse(event, context, status, message):
+                  cfnresponse.send(event, context, status, { "Message": message })
+
+              print("Boto3 module version: " + boto3.__version__)
+              if event['RequestType'] in ('Create','Update'):
+                  logger.info('Request Type: {}'.format(event['RequestType']))
+                  try:
+                      client = boto3.client('securityhub')
+                      response = client.create_action_target(
+                          Name='Send to Slack',
+                          Description='This Custom Action sends selected findings as channel in a Slack Workspace',
+                          Id=os.environ['CustomActionName']
+                      )
+                      print(response)
+                      sendCfnResponse(event, context, cfnresponse.SUCCESS, "SecurityHub Custom Action created succesfully.")
+                  except Exception as e:
+                      logger.error('Exception: {}'.format(e))
+                      sendCfnResponse(event, context, cfnresponse.FAILED, str(e))
+              elif event['RequestType'] in ('Delete'):
+                  logger.info('Request Type: {}'.format(event['RequestType']))
+                  client = boto3.client('securityhub')
+                  action_target_arn="arn:aws:securityhub:" + os.environ['Region'] + ":" + os.environ['AWSAccountID'] + ":action/custom/" + os.environ['CustomActionName']
+                  response = client.delete_action_target(
+                      ActionTargetArn=action_target_arn
+                  )
+                  sendCfnResponse(event, context, cfnresponse.SUCCESS, "No action needed during deletion...")
+              else:
+                  logger.error('Request type not supported!')
+                  sendCfnResponse(event, context, cfnresponse.FAILED, "Request type not supported.")
+      Description: "Configure SecurityHub"
+      Handler: "index.handler"
+      MemorySize: 1024
+      Role: !Sub ${SecurityHubConfigRole.Arn}
+      Runtime: "python3.7"
+      Timeout: 60
+  SecurityHubConfigRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: !Sub logstreamer-${AWS::Region}
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+            - Effect: Allow
+              Action:
+              - securityhub:CreateActionTarget
+              Resource: "*"
+            - Effect: Allow
+              Action:
+              - securityhub:DeleteActionTarget
+              Resource: !Sub arn:aws:securityhub:${AWS::Region}:${AWS::AccountId}:hub/default
+  SecurityHubFindingsToSlack:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: SecurityHubFindingsToSlack
+      Description: 'CloudWatchEvents Rule to enable SecurityHub Findings in Slack '
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.securityhub
+      Targets:
+        - Arn: !GetAtt lambdafindingsToSlack.Arn
+          Id: SecurityHubToSlackFunction
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      FunctionName: !GetAtt lambdafindingsToSlack.Arn
+      SourceArn: !GetAtt SecurityHubFindingsToSlack.Arn
+  lambdafindingsToSlack:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt SecurityHubToSlackRole.Arn
+      Code:
+        ZipFile: |
+          'use strict';
+          const AWS = require('aws-sdk');
+          const url = require('url');
+          const https = require('https');
+
+          const webHookUrl = process.env['webHookUrl'];
+          const slackChannel = process.env.slackChannel;
+          const minSeverityLevel = process.env['minSeverityLevel'];
+
+          function postMessage(message, callback) {
+              const body = JSON.stringify(message);
+              const options = url.parse(webHookUrl);
+              options.method = 'POST';
+              options.headers = {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(body),
+              };
+
+              const postReq = https.request(options, (res) => {
+                  const chunks = [];
+                  res.setEncoding('utf8');
+                  res.on('data', (chunk) => chunks.push(chunk));
+                  res.on('end', () => {
+                      if (callback) {
+                          callback({
+                              body: chunks.join(''),
+                              statusCode: res.statusCode,
+                              statusMessage: res.statusMessage,
+                          });
+                      }
+                  });
+                  return res;
+              });
+
+              postReq.write(body);
+              postReq.end();
+          }
+
+          function processEvent(event, callback) {
+              const message = event;
+              const consoleUrl = `https://console.aws.amazon.com/securityhub`;
+              const finding = message.detail.findings[0].Types[0];
+              const findingDescription = message.detail.findings[0].Description;
+              const findingTime = message.detail.findings[0].updatedAt;
+              const findingTimeEpoch = Math.floor(new Date(findingTime) / 1000);
+              const account = message.detail.findings[0].AwsAccountId;
+              const region = message.detail.findings[0].Resources[0].Region;
+              const messageId = message.detail.findings[0].Resources[0].Id;
+              const lastSeen = `<!date^${findingTimeEpoch}^{date} at {time} | ${findingTime}>`;
+              var color = '#7CD197';
+              var severity = '';
+
+              if (message.detail.findings[0].Severity.Product < 4.0) {
+                  if (minSeverityLevel !== 'LOW') {
+                      callback(null);
+                      return;
+                  }
+                  severity = 'Low';
+              } else if (message.detail.findings[0].Severity.Product < 7.0) {
+                  if (minSeverityLevel === 'HIGH') {
+                      callback(null);
+                      return;
+                  }
+                  severity = 'Medium';
+                  color = '#e2d43b';
+              } else {
+                  severity = 'High';
+                  color = '#ad0614';
+              }
+
+              const attachment = [{
+                  "fallback": finding + ` - ${consoleUrl}/home?region=` + `${region}#/findings?search=id%3D${messageId}`,
+                  "pretext": `*AWS SecurityHub finding in ${region} for Acct: ${account}*`,
+                  "title": `${finding}`,
+                  "title_link": `${consoleUrl}/home?region=${region}#/research`,
+
+                  "text": `${findingDescription}`,
+                  "fields": [{
+                          "title": "Severity",
+                          "value": `${severity}`,
+                          "short": true
+                      },
+                      {
+                          "title": "Region",
+                          "value": `${region}`,
+                          "short": true
+                      },
+                      {
+                          "title": "Last Seen",
+                          "value": `${lastSeen}`,
+                          "short": true
+                      }
+                  ],
+                  "mrkdwn_in": ["pretext"],
+                  "color": color
+              }];
+
+              const slackMessage = {
+                  channel: slackChannel,
+                  text: '',
+                  attachments: attachment,
+                  username: 'SecurityHub',
+                  'mrkdwn': true,
+                  icon_url: 'https://raw.githubusercontent.com/aws-samples/amazon-securityhub-to-slack/master/images/gd_logo.png'
+              };
+
+              postMessage(slackMessage, (response) => {
+                  if (response.statusCode < 400) {
+                      console.info('Message posted successfully');
+                      callback(null);
+                  } else if (response.statusCode < 500) {
+                      console.error(`Error posting message to Slack API: ${response.statusCode} - ${response.statusMessage}`);
+                      callback(null);
+                  } else {
+                      callback(`Server error when processing message: ${response.statusCode} - ${response.statusMessage}`);
+                  }
+              });
+          }
+          exports.handler = (event, context, callback) => {
+              processEvent(event, callback);
+          };
+      Environment:
+        Variables:
+          slackChannel: !Ref SlackChannel
+          webHookUrl: !Ref SlackIncomingWebHookURL
+          minSeverityLevel: !Ref MinSeverityLevel
+      Runtime: nodejs10.x
+      MemorySize: 128
+      Timeout: 10
+      Description: Lambda to push SecurityHub findings to Slack
+      TracingConfig:
+        Mode: Active
+

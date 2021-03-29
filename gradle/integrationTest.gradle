@@ -1,0 +1,72 @@
+/**
+ * This script adds a dedicated integration testing source set (src/integTest) and task
+ * (integTest) when applied to any Java project.
+ *
+ * Configuration:
+ *     apply from: path/to/integrationTest.gradle
+ *
+ * Usage:
+ *     gradle integrationTest
+ *      - or -
+ *     gradle check
+ */
+
+sourceSets {
+    integrationTest {
+        java.srcDir 'src/it/java'
+        resources.srcDir 'src/it/resources'
+    }
+}
+
+task integrationTest(type: Test) {
+    useJUnitPlatform()
+    description = "Runs integration tests."
+    group("verification")
+
+    testClassesDirs = sourceSets.integrationTest.output.classesDirs
+    classpath = sourceSets.integrationTest.runtimeClasspath
+
+    maxHeapSize = '1024m'
+    maxParallelForks(Runtime.getRuntime().availableProcessors())
+
+    ignoreFailures = false
+
+    testLogging {
+        exceptionFormat = 'full'
+    }
+
+    systemProperties System.properties
+
+    // ensure we don't overwrite default report directories used by 'test' task
+    reports.html.destination = file("${project.buildDir}/reports/integrationTest")
+    reports.junitXml.destination = file("${project.buildDir}/integrationTest-results")
+    binResultsDir = file("${project.buildDir}/integrationTest-results/binary/integrationTest")
+
+    beforeSuite { descriptor ->
+        logger.lifecycle("Running ${descriptor.name}")
+    }
+
+    afterSuite { desc, result ->
+        def timeElapsed = (result.endTime - result.startTime) / 1000
+        logger.lifecycle("Tests run: ${result.testCount}, Failures: ${result.failedTestCount}, Skipped: ${result.skippedTestCount}, Time elapsed: ${timeElapsed} sec")
+    }
+}
+
+configurations {
+    integrationTestCompile.extendsFrom testCompileClasspath
+    integrationTestRuntime.extendsFrom testRuntimeClasspath
+}
+
+dependencies {
+    integrationTestImplementation sourceSets.main.output
+    integrationTestImplementation sourceSets.test.output
+    integrationTestCompileOnly 'org.projectlombok:lombok:1.18.10'
+    integrationTestAnnotationProcessor 'org.projectlombok:lombok:1.18.10'
+}
+
+// Add integration test source directories to IDEA .iml files
+if (project.plugins.hasPlugin('idea')) {
+    idea.module {
+        testSourceDirs += (sourceSets.integrationTest.java.srcDirs + sourceSets.integrationTest.resources.srcDirs)
+    }
+}

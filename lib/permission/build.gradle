@@ -1,0 +1,37 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+dependencies {
+    api project(':lib:slgl_client')
+    compileOnly project(':lib:template')
+
+    implementation 'org.slf4j:slf4j-api:1.7.28';
+    implementation 'io.github.jamsesso:json-logic-java:1.0.3'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.10.2'
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+        }
+    }
+
+    repositories {
+        maven {
+            credentials {
+                username "$System.env.MAVEN_USERNAME"
+                password "$System.env.MAVEN_PASSWORD"
+            }
+
+            url "$System.env.MAVEN_URL"
+        }
+    }
+}

@@ -1,0 +1,28 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+    commands:
+      # Upgrade AWS CLI to the latest version
+      - pip install --upgrade awscli
+      - pip install --user aws-sam-cli
+      - pip install cfn-lint
+      - USER_BASE_PATH=$(python -m site --user-base)
+      - export PATH=$PATH:$USER_BASE_PATH/bin
+  pre_build:
+    commands:
+      - echo Tests started on `date`
+  build:
+    commands:
+      - echo Build started on `date`
+      - cd infrastructure/StackSetsResource
+      - sam build --template Templates/stackset-function-template.yaml
+      - sam package --s3-bucket $S3_BUCKET --output-template-file stack-set-function-template.yml
+      - cfn-lint -t stack-set-function-template.yml
+artifacts:
+  files:
+    - infrastructure/StackSetsResource/stack-set-function-template.yml
+    - infrastructure/deploy/deployment_pipeline_generated.yml
+    - infrastructure/deployment/*

@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Enable AWS Config
+Parameters:
+  Frequency:
+    Type: String
+    Default: 24hours
+    Description: The frequency with which AWS Config delivers configuration snapshots.
+    AllowedValues:
+      - 1hour
+      - 3hours
+      - 6hours
+      - 12hours
+      - 24hours
+  MasterAccountId:
+    Type: String
+    Description: The AWS Accont ID that AWS Config delivers configuration to.
+Conditions:
+  IsMasterAccountID: !Equals
+    - !Ref AWS::AccountId
+    - !Ref MasterAccountId
+  IsRegionEuWest1: !Equals
+    - !Ref AWS::Region
+    - "eu-west-1"
+  CreateS3ConfigBucket: !And
+    - !Condition IsMasterAccountID
+    - !Condition IsRegionEuWest1
+Mappings:
+  Settings:
+    FrequencyMap:
+      1hour: One_Hour
+      3hours: Three_Hours
+      6hours: Six_Hours
+      12hours: Twelve_Hours
+      24hours: TwentyFour_Hours
+Resources:
+  ConfigBucket:
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Condition: CreateS3ConfigBucket
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "slgl-config-bucket-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      AccessControl: Private
+  ConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateS3ConfigBucket
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSConfigBucketPermissionsCheck
+            Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource:
+              - !Sub "arn:aws:s3:::${ConfigBucket}"
+          - Sid: AWSConfigBucketDelivery
+            Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action: s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${ConfigBucket}/AWSLogs/*"
+  ConfigRecorderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSConfigRole
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Properties:
+      RoleARN: !GetAtt ConfigRecorderRole.Arn
+      RecordingGroup:
+        AllSupported: True
+        IncludeGlobalResourceTypes: !If
+          - IsRegionEuWest1
+          - True
+          - False
+  ConfigDeliveryChannel:
+    Type: AWS::Config::DeliveryChannel
+    Properties:
+      ConfigSnapshotDeliveryProperties:
+        DeliveryFrequency: !FindInMap
+          - Settings
+          - FrequencyMap
+          - !Ref Frequency
+      S3BucketName:
+        !Sub "slgl-config-bucket-${AWS::AccountId}"
+  SlackNotificationsTopic:
+    Type: AWS::SNS::Topic

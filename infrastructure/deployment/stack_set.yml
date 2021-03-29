@@ -1,0 +1,78 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Let's build a StackSet
+Parameters:
+  StackSetName:
+    Type: String
+    Description: "[Optional] Unique name for this StackSet"
+  StackSetDescription:
+    Type: String
+    Description: "[Optional] Description for this StackSet"
+  TemplateURL:
+    Type: String
+    Description: "S3 URL for the CloudFormation template to associate with this StackSet"
+#    AllowedPattern: ^https://s3(.+)\.amazonaws.com/.+$
+    ConstraintDescription: "must be a valid S3 URL to a template object"
+    Default: "https://s3.us-east-2.amazonaws.com/cloudformation-pipeline/events.yaml"
+  Capabilities:
+    Type: String
+    AllowedValues: [ "CAPABILITY_IAM", "CAPABILITY_NAMED_IAM", "" ]
+    Description: "Include capabilities if your template contains IAM resources (see https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-template.html#using-iam-capabilities)"
+    Default: ""
+  AdministrationRoleARN:
+    Type: String
+  ExecutionRoleName:
+    Type: String
+  StackInstancesRegions:
+    Type: CommaDelimitedList
+  MasterAccountId:
+    Description: "AWS config master account ID - set only in multi account AWS Config Setup"
+    Type: String
+    Default: ""
+  SlackIncomingWebHookURL:
+    Description: "Your unique Incoming Web Hook URL from slack service"
+    Type: String
+    Default: ""
+  SlackChannel:
+    Description: "The slack channel to send findings to"
+    Type: String
+    Default: ""
+Conditions:
+  HasStackSetName: !Not [!Equals [!Ref StackSetName, ""]]
+  HasStackSetDescription: !Not [!Equals [!Ref StackSetDescription, ""]]
+  HasCapabilities: !Not [!Equals [!Ref Capabilities, ""]]
+  HasMasterAccountId: !Not [!Equals [!Ref MasterAccountId, ""]]
+  SlackIncomingWebHookURL: !Not [!Equals [!Ref SlackIncomingWebHookURL, ""]]
+  SlackChannel: !Not [!Equals [!Ref SlackChannel, ""]]
+
+Resources:
+  StackSet:
+    Type: Custom::StackSet
+    Properties:
+      ServiceToken:
+        Fn::ImportValue: StackSetCustomResource
+      loglevel: "info"
+      StackSetName: !If [HasStackSetName, !Ref StackSetName, !Ref "AWS::NoValue"]
+      StackSetDescription: !If [HasStackSetDescription, !Ref StackSetDescription, !Ref "AWS::NoValue"]
+      TemplateURL: !Ref TemplateURL
+      Capabilities: !If [HasCapabilities, [ !Ref Capabilities ], [!Ref "AWS::NoValue"]]
+      AdministrationRoleARN: !Ref AdministrationRoleARN
+      ExecutionRoleName: !Ref ExecutionRoleName
+      OperationPreferences: {
+        "RegionOrder": [
+          "eu-west-1"
+        ],
+        "FailureToleranceCount": 0,
+        "MaxConcurrentCount": 3
+      }
+      Parameters:
+         - !If [HasMasterAccountId, { MasterAccountId: !Ref MasterAccountId },  !Ref "AWS::NoValue" ]
+         - !If [SlackIncomingWebHookURL, { SlackIncomingWebHookURL: !Ref SlackIncomingWebHookURL },  !Ref "AWS::NoValue" ]
+         - !If [SlackChannel, { SlackChannel: !Ref SlackChannel },  !Ref "AWS::NoValue" ]
+      Tags:
+        - Environment: Testing
+        - Creator: Szymon
+      StackInstances:
+        - Regions: !Ref StackInstancesRegions
+          Accounts:
+            - !Sub ${AWS::AccountId}

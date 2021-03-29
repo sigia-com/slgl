@@ -1,0 +1,24 @@
+{
+  "company": {
+    "name": "Acme LTD",
+    "address": {
+      "line1": "Example address line 1",
+      "line2": "Example address line 2"
+    },
+    "signer": "Richard Roe",
+    "sign_date": "18.11.2019"
+  },
+  "recipient": {
+    "name": "John Doe",
+    "address": {
+      "line1": "Other example address line 1",
+      "line2": "Other example address line 2"
+    },
+    "sign_date": "19.11.2019"
+  },
+  "agreement": {
+    "effective_date": "01.12.2019",
+    "duration_years": 5,
+    "governing_law_state": "California"
+  }
+}

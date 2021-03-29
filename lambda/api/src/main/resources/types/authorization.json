@@ -1,0 +1,9 @@
+{
+  "@type": "ce6b07da-96d5-4c09-8659-e9e806dfe1c1",
+  "state_properties": [
+    "authorize", "require" ,"require_logic", "authorization_principals"
+  ],
+  "#templates": [{
+    "text": "Authorization for:\n[#list authorize as authorize_item]\n[#if authorize_item.action == 'link_to_anchor']\n- linking to anchor ${authorize_item.anchor} of node ${authorize_item.node}.\n[#elseif authorize_item.action == 'read_state']\n- reading state of node ${authorize_item.node}\n[#else]\n- unknown action\n[/#if]\n[/#list]\n\nAuthorization can be used when:\n[#list require as require_path, require_value]\n[#if require_path == '$api_client.name' && require_value?is_string]\n- request is made by user ${require_value} using his API-key\n[#elseif require_path == '$principals' && require_value?is_hash && require_value.op == 'at_least_one_meets_requirements' && !require_value.aggregate?? && !require_value.ref?? && require_value.value?is_hash && require_value.value[\"$current.api.username\"]?is_hash && require_value.value[\"$current.api.username\"].op == '==']\n- request is made by user ${require_value.value[\"$current.api.username\"].value} using his API-key\n[#else]\n- custom requirement is meet: ${require_path} - ${require_value} \n[/#if]\n[/#list]\n"
+  }]
+}

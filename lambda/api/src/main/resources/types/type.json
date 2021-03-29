@@ -1,0 +1,12 @@
+{
+  "@type": "ce6b07da-96d5-4c09-8659-e9e806dfe1c1",
+  "state_properties": [
+    "extends_type", "state_properties", "anchors", "permissions"
+  ],
+  "anchors": [
+    {
+      "id": "#templates",
+      "type": "1507707c-e5d9-4915-85a1-a48e5200323a"
+    }
+  ]
+}

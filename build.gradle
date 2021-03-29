@@ -1,0 +1,41 @@
+allprojects {
+    def getGitHash = { ->
+        def stdout = new ByteArrayOutputStream()
+        exec {
+            commandLine 'git', 'rev-parse', '--short', 'HEAD'
+            standardOutput = stdout
+        }
+        return stdout.toString().trim()
+    }
+
+    version = System.env.BUILD_NUMBER ? (new Date().format('yyyy.MM.dd') + '.' + System.env.BUILD_NUMBER + '-' + getGitHash()) : '1.0.dev-SNAPSHOT'
+}
+
+subprojects {
+
+    repositories {
+        mavenCentral()
+        maven { url "https://ec.europa.eu/cefdigital/artifact/repository/esignaturedss/" }
+    }
+
+    apply plugin: 'java'
+
+    java {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+    }
+
+    test {
+        useJUnitPlatform()
+    }
+}
+
+task('printVersion') {
+    doLast {
+        println project.version
+    }
+}

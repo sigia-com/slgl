@@ -1,0 +1,52 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+test {
+    maxHeapSize = '512m'
+    maxParallelForks(Runtime.getRuntime().availableProcessors())
+}
+
+dependencies {
+    implementation 'org.apache.httpcomponents:httpclient:4.5.10'
+    implementation 'com.fasterxml.jackson.core:jackson-annotations:2.10.2'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.10.2'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.10.2'
+
+    implementation 'org.slf4j:slf4j-api:1.7.28'
+
+    compileOnly 'com.itextpdf:itext7-core:7.1.8'
+
+    testImplementation 'org.assertj:assertj-core:3.16.1'
+    testImplementation 'commons-io:commons-io:2.4'
+    testImplementation 'com.itextpdf:itext7-core:7.1.8'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.4.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.4.2'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.4.2'
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+        }
+    }
+
+    repositories {
+        maven {
+            credentials {
+                username "$System.env.MAVEN_USERNAME"
+                password "$System.env.MAVEN_PASSWORD"
+            }
+
+            url "$System.env.MAVEN_URL"
+        }
+    }
+}

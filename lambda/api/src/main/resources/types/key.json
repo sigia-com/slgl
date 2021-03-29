@@ -1,0 +1,23 @@
+{
+  "@type": "ce6b07da-96d5-4c09-8659-e9e806dfe1c1",
+  "state_properties": [
+    "value"
+  ],
+  "permissions": [
+    {
+      "allow": [
+        {
+          "action": "all"
+        }
+      ],
+      "require": {
+        "$principals": {
+          "op": "at_least_one_meets_requirements",
+          "value": {
+            "$current.api.username": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+          }
+        }
+      }
+    }
+  ]
+}

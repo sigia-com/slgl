@@ -1,0 +1,30 @@
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':lambda:api')
+    implementation project(':lib:permission')
+
+    // AWS v1
+    implementation 'software.amazon.qldb:amazon-qldb-driver-java:2.0.0'
+
+    // logging
+    implementation 'com.amazonaws:aws-lambda-java-log4j2:1.1.0'
+    implementation 'org.slf4j:slf4j-api:1.7.28'
+    implementation 'org.apache.logging.log4j:log4j-slf4j-impl:2.12.1'
+
+    // utils
+    implementation 'com.google.guava:guava:29.0-jre'
+    implementation 'org.apache.commons:commons-lang3:3.11'
+
+    compileOnly 'org.projectlombok:lombok:1.18.10'
+    annotationProcessor 'org.projectlombok:lombok:1.18.10'
+
+    // tests
+    testImplementation 'org.assertj:assertj-core:3.16.1'
+}

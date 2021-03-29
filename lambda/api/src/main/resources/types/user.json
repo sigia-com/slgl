@@ -1,0 +1,34 @@
+{
+  "@type": "ce6b07da-96d5-4c09-8659-e9e806dfe1c1",
+  "anchors": [
+    {
+      "id": "#keys",
+      "type": "3588ea96-6a11-4e76-aa89-3da79a5298e5"
+    },
+    {
+      "id": "#deletion",
+      "type": "1446deae-13fb-4fe9-a751-48d0d3ebdfa7"
+    },
+    {
+      "id": "#credits",
+      "type": "af7f8403-b442-412a-8891-b0bb6901ed4e"
+    }
+  ],
+  "permissions": [
+    {
+      "allow": [
+        {
+          "action": "all"
+        }
+      ],
+      "require": {
+        "$principals": {
+          "op": "at_least_one_meets_requirements",
+          "value": {
+            "$current.api.username": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+          }
+        }
+      }
+    }
+  ]
+}

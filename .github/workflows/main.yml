@@ -1,0 +1,147 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the action will run. 
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches: [ master, github ]
+  pull_request:
+    branches: [ master, github ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      - uses: actions/setup-java@v1
+        with:
+          java-version: '11'
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.7' # Version range or exact version of a Python version to use, using SemVer's version range syntax
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f ./qldb_export/requirements.txt ]; then pip install -r ./qldb_export/requirements.txt; fi
+      # Runs a single command using the runners shell
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Build and Deploy slgl Build and upload packages to slgl-artifact-github-bucket
+        run: |
+          STACK_NAME=slgl-beta-github-${GITHUB_RUN_ID}
+          sam build
+          sam package --s3-bucket slgl-artifact-github-bucket \
+            --output-template-file template-export.yml \
+            --no-progressbar \
+            --s3-prefix ${GITHUB_RUN_ID}
+          sam deploy --template-file /home/runner/work/sigia-ledger/sigia-ledger/template-export.yml \
+            --stack-name ${STACK_NAME} \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides \
+                IncludeIntegrationTestsResources=true \
+                IncludeJournalExport=false \
+                DevUser=slgl-github-deploy
+
+      - name: Run Integration tests
+        run: |
+          STACK_NAME=slgl-beta-github-${GITHUB_RUN_ID}
+          chmod +x ./gradlew
+          ./gradlew integrationTest -Ddev.slgl.stackName=${STACK_NAME} --continue
+
+      - name: Prepare packages
+        run: |
+          aws s3 cp template-export.yml s3://slgl-artifact-github-bucket/${GITHUB_RUN_ID}/template-export.yml
+          aws s3 sync infrastructure/deployment/ s3://slgl-artifact-github-bucket/${GITHUB_RUN_ID}/infrastructure/deployment/
+          aws s3 sync infrastructure/StackSetsResource/ s3://slgl-artifact-github-bucket/${GITHUB_RUN_ID}/infrastructure/StackSetsResource/
+          aws s3 cp infrastructure/buildspec.yml s3://slgl-artifact-github-bucket/${GITHUB_RUN_ID}/infrastructure/buildspec.yml
+
+      - name: Upload Packages
+        run: |
+          ## Upload Packages
+          mkdir ${GITHUB_RUN_ID}
+          aws s3 sync s3://slgl-artifact-github-bucket/${GITHUB_RUN_ID}/ ${GITHUB_RUN_ID}/
+          cd ${GITHUB_RUN_ID}/
+          zip -r ../${GITHUB_RUN_ID}.zip ./*
+          cd ..
+          aws s3 cp ${GITHUB_RUN_ID}.zip s3://slgl-artifact-github-bucket/${GITHUB_RUN_ID}/release-package.zip
+          aws s3 cp ${GITHUB_RUN_ID}.zip s3://slgl-artifact-github-bucket/latest/release-package.zip
+          aws s3 cp template-export.yml s3://slgl-artifact-github-bucket/latest/template-export.yml
+          aws s3 cp infrastructure/deployment/aws_security_pipeline.yml  s3://slgl-artifact-github-bucket/latest/aws_security_pipeline.yml
+
+      - name: Delete Integration tests infrastructure
+        if: ${{ always() }}
+        run: |
+          STACK_NAME=slgl-beta-github-${GITHUB_RUN_ID}
+          TEST_STATE_BUCKET=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='TestStateStorageS3Bucket'].OutputValue" --output text)
+          TEST_OBSERVER_BUCKET=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='TestObserverStorageS3Bucket'].OutputValue" --output text)
+          OBSERVER_DEAD_LETTER_BUCKET=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='ObserverDeadLetterBucket'].OutputValue" --output text)
+          TRUST_LIST_BUCKET=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='TrustListCacheBucket'].OutputValue" --output text)
+          aws s3 rm s3://${TEST_STATE_BUCKET} --recursive
+          aws s3 rm s3://${TEST_OBSERVER_BUCKET} --recursive
+          aws s3 rm s3://${OBSERVER_DEAD_LETTER_BUCKET} --recursive
+          aws s3 rm s3://${TRUST_LIST_BUCKET} --recursive
+          aws cloudformation delete-stack --stack-name ${STACK_NAME} --region=eu-west-1
+          aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} --region=eu-west-1
+
+
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+        with:
+          tag_name: ${{ github.run_number }}
+          release_name: Release ${{ github.run_id }}
+          body: |
+
+            Release for ${{ github.sha }}
+            GitRef: ${{ github.ref }}
+
+            Setup CloudFormation Stack:
+            https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/create/review?templateURL=https://s3.eu-west-1.amazonaws.com/slgl-artifact-github-bucket/${{ github.run_id }}/template-export.yml&stackName=slgl
+
+            Setup Security Pipeline:
+            https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/create/review?templateURL=https://s3.eu-west-1.amazonaws.com/slgl-artifact-github-bucket/${{ github.run_id }}/aws_security_pipeline.yml&stackName=aws-security-slgl
+
+            Lambda packages can be found here: s3://slgl-artifact-github-bucket/${{ github.run_id }}/
+            or in release-package.zip file
+
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Package
+        id: upload-release-package
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ./${{ github.run_id }}.zip
+          asset_name: release-package.zip
+          asset_content_type: application/zip
+
+      - name: Upload Release CloudFormation Template
+        id: upload-release-template
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ./template-export.yml
+          asset_name: template-export.yml
+          asset_content_type: text/x-yaml

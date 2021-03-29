@@ -1,0 +1,733 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SLGL
+
+Parameters:
+  AuditorAllowedAwsAccount:
+    Type: String
+    Default: "174706592265"
+    Description: "Allow external AWS account to access AuditorRole"
+  AdminApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: "Initial Admin Api Key - if not set will be generated. You can check it in 'DefaultAdminApiKey'  CF Output"
+  IncludeIntegrationTestsResources:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: "Use for developement purouses - eg. Integration tests"
+  IncludeJournalExport:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: "Use if you want QLDB Journal exported to S3"
+  DevUser:
+    Type: String
+    Default: ""
+    Description: "Assign IAM policy to User/Role that grants access to resources in this stack. You can use Role or User not both."
+  DevIamRole:
+    Type: String
+    Default: ""
+    Description: "Assign IAM policy to User/Role that grants access to resources in this stack. You can use Role or User not both."
+
+Globals:
+  Function:
+    Timeout: 900
+    AutoPublishAlias: live
+    DeploymentPreference:
+      Enabled: true
+      Type: AllAtOnce
+  Api:
+    EndpointConfiguration: REGIONAL
+
+
+Resources:
+  SecuredApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        DefaultAuthorizer: SlglAuthorizerFunction
+        Authorizers:
+          SlglAuthorizerFunction:
+            FunctionPayloadType: REQUEST
+            FunctionArn: !GetAtt SlglAuthorizerFunction.Arn
+            Identity:
+              Context:
+                - requestId
+      GatewayResponses:
+        UNAUTHORIZED:
+          StatusCode: 401
+          ResponseTemplates:
+            "application/json": |
+              {
+                "error" : {
+                  "code" : "invalid_api_key",
+                  "message" : "Provided API key is invalid."
+                }
+              }
+  SlglAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Description: "NodeJS Function used to authorize requests"
+    Properties:
+      CodeUri: ./lambda/api_authorizer
+      Handler: read_authorizer.handler
+      Runtime: nodejs10.x
+      Environment:
+        Variables:
+          USER_DATA_DYNAMO_DB_TABLE:
+            Ref: UserDataDynamoDbTable
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'dynamodb:GetItem'
+                - 'dynamodb:Query'
+              Resource:
+                !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${UserDataDynamoDbTable}'
+  SlglApiFunction:
+    Type: AWS::Serverless::Function
+    Description: "SLGL Core Lambda Function"
+    Properties:
+      CodeUri: ./lambda/api
+      Handler: io.slgl.api.LambdaHandler::handleRequest
+      Runtime: java11
+      MemorySize: 3072
+      ProvisionedConcurrencyConfig:
+        ProvisionedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          DSS_CACHE_S3_BUCKET:
+            Ref: TrustListCacheBucket
+          S3_OBSERVER_DEAD_LETTER_BUCKET:
+            Ref: ObserverDeadLetterBucket
+          S3_OBSERVER_DEAD_LETTER_REGION: !Sub '${AWS::Region}'
+          SLGL_QLDB_LEDGER:
+            Ref: SlglQldbLedger
+          USER_DATA_DYNAMO_DB_TABLE:
+            Ref: UserDataDynamoDbTable
+          SLGL_SNS_TOPIC:
+            Ref: SlglSnsTopic
+          JAVA_TOOL_OPTIONS:
+            "-Dorg.freemarker.loggerLibrary=SLF4J"
+      Events:
+        SlglApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecuredApi
+            Method: ANY
+            Path: /
+        SlglApiCatchAll:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SecuredApi
+            Method: ANY
+            Path: /{catchAll+}
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'qldb:SendCommand'
+              Resource:
+                !Sub 'arn:aws:qldb:${AWS::Region}:${AWS::AccountId}:ledger/${SlglQldbLedger}'
+            - Effect: Allow
+              Action:
+                - 'dynamodb:GetItem'
+                - 'dynamodb:PutItem'
+                - 'dynamodb:UpdateItem'
+                - 'dynamodb:Query'
+              Resource:
+                !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${UserDataDynamoDbTable}'
+            - Effect: Allow
+              Action:
+                - 'sns:Publish'
+              Resource:
+                Ref: SlglSnsTopic
+            - Effect: Allow
+              Action:
+                - 's3:PutObject'
+                - 's3:PutObjectAcl'
+              Resource:
+                !Sub "arn:aws:s3:::${ObserverDeadLetterBucket}/*"
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+                - 's3:PutObject'
+                - 's3:PutObjectAcl'
+                - 's3:GetBucketLocation'
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - 'sqs:SendMessage'
+                - 'sqs:SendMessageBatch'
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+              Resource:
+                !Sub "${TrustListCacheBucket.Arn}/*"
+            - Effect: Allow
+              Action:
+                - 's3:ListBucket'
+              Resource:
+                !Sub "${TrustListCacheBucket.Arn}"
+  ObserverDeadLetterBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+  ObserverDeadLetterBucketPolicyPublic:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref ObserverDeadLetterBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: 's3:GetObject'
+            Effect: Allow
+            Resource: !Sub '${ObserverDeadLetterBucket.Arn}/*'
+  ExportJournalBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+  BucketPolicyPublic:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref ExportJournalBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Principal: '*'
+            Action: 's3:GetObject'
+            Effect: Allow
+            Resource: !Sub '${ExportJournalBucket.Arn}/*'
+  ExportJournal:
+    Condition: ExportJournalEnabled
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          QLDBName: !Sub ${SlglQldbLedger}
+          Region: !Sub ${AWS::Region}
+          AWSAccountID: !Sub ${AWS::AccountId}
+          ExportJournalBucket: !Sub ${ExportJournalBucket}
+          ExportJournalRole: !Sub ${ExportJournalQLDBRole.Arn}
+          ExportJournalPrefix: "qldb-journal-export-data/"
+      CodeUri: ./lambda/qldb_export
+      Description: "Export QLDB journal to S3"
+      Handler: "index.handler"
+      MemorySize: 256
+      Events:
+        CronSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0/1 * * * ? *)
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'qldb:exportjournaltos3'
+                - 'qldb:describejournals3export'
+              Resource:
+                !Sub 'arn:aws:qldb:${AWS::Region}:${AWS::AccountId}:ledger/${SlglQldbLedger}'
+            - Effect: Allow
+              Action:
+                - 's3:ListBucket'
+              Resource:
+                !Sub "${ExportJournalBucket.Arn}"
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+              Resource:
+                !Sub "${ExportJournalBucket.Arn}/qldb-journal-export-data/*"
+            - Effect: Allow
+              Action:
+                - 's3:DeleteObject'
+              Resource:
+                !Sub "${ExportJournalBucket.Arn}/qldb-journal-export-data/*.manifest"
+            - Effect: Allow
+              Action:
+                - 's3:PutObject'
+              Resource:
+                - !Sub "${ExportJournalBucket.Arn}/manifests/*.manifest"
+      Runtime: "python3.7"
+      Timeout: 60
+      ReservedConcurrentExecutions: 1
+  ExportJournalQLDBRole:
+    Condition: ExportJournalEnabled
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - qldb.amazonaws.com
+      Policies:
+        - PolicyName: ExportJournaltoS3RolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObjectAcl'
+                  - 's3:PutObject'
+                Resource:
+                  !Sub "${ExportJournalBucket.Arn}/*"
+
+  TrustListCacheBucket:
+    Type: AWS::S3::Bucket
+
+  TrustListCacheRefreshFunction:
+    Type: AWS::Serverless::Function
+    Description: "Function updates Trust List Cache periodically and store output in S3"
+    Properties:
+      CodeUri: ./lambda/trustlist_cache_refresher
+      Handler: io.slgl.trustlistrefresher.TLCacheRefresherLambdaHandler::handleRequest
+      Runtime: java11
+      MemorySize: 2024
+      Environment:
+        Variables:
+          DSS_CACHE_S3_BUCKET:
+            Ref: TrustListCacheBucket
+          SLGL_QLDB_LEDGER:
+            Ref: SlglQldbLedger
+          DDS_CACHE_REFRESH_THREAD_COUNT:
+            "8"
+      Events:
+        CronSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(30 minutes)
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 's3:*Object'
+              Resource:
+                !Sub "${TrustListCacheBucket.Arn}/*"
+            - Effect: Allow
+              Action:
+                - 's3:ListBucket'
+              Resource:
+                !Sub "${TrustListCacheBucket.Arn}"
+
+  SetupFunction:
+    Type: AWS::Serverless::Function
+    Description: "Function configures QLDB eg configure indexes"
+    Properties:
+      CodeUri: ./lambda/setup
+      Handler: io.slgl.setup.LambdaHandler::handleRequest
+      Runtime: java11
+      MemorySize: 512
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'qldb:SendCommand'
+              Resource:
+                !Sub 'arn:aws:qldb:${AWS::Region}:${AWS::AccountId}:ledger/${SlglQldbLedger}'
+            - Effect: Allow
+              Action:
+                - 'dynamodb:PutItem'
+                - 'dynamodb:UpdateItem'
+                - 'dynamodb:Query'
+              Resource:
+                !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${UserDataDynamoDbTable}'
+  TestAuditorSqsQueue:
+    Condition: IntegrationTestsResourcesEnabled
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName:
+        !Sub '${AWS::StackName}-test-auditor-sqs'
+
+  TestObserverStorageS3Bucket:
+    Condition: IntegrationTestsResourcesEnabled
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        !Sub '${AWS::StackName}-test-observer-storage'
+      AccessControl: PublicRead
+
+  TestStateStorageS3Bucket:
+    Condition: IntegrationTestsResourcesEnabled
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        !Sub '${AWS::StackName}-test-state-storage'
+      AccessControl: PublicRead
+
+  TestResourcesDevPolicy:
+    Condition: IntegrationTestsResourcesEnabled
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-access'
+      Users: !If
+        - SetupDevUserAccess
+        - [ !Ref DevUser ]
+        - !Ref "AWS::NoValue"
+      Roles: !If
+        - SetupDevRoleAccess
+        - [ !Ref DevIamRole ]
+        - !Ref "AWS::NoValue"
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'sqs:ReceiveMessage'
+              - 'sqs:DeleteMessage'
+            Resource:
+              - !Sub ${TestAuditorSqsQueue.Arn}
+          - Effect: Allow
+            Action:
+              - 's3:PutObject'
+              - 's3:PutObjectAcl'
+              - 's3:GetObject'
+            Resource:
+              - !Sub "arn:aws:s3:::${TestObserverStorageS3Bucket}/*"
+              - !Sub "arn:aws:s3:::${TestStateStorageS3Bucket}/*"
+          - Effect: Allow
+            Action:
+              - 's3:GetBucketLocation'
+            Resource:
+              - !Sub ${TestObserverStorageS3Bucket.Arn}
+              - !Sub ${TestStateStorageS3Bucket.Arn}
+
+
+  SetupResource:
+    Type: Custom::CustomResource
+    Properties:
+      ServiceToken: !GetAtt 'SetupFunction.Arn'
+      Version: 6
+      AdminApiKey:
+        Ref: AdminApiKey
+      EnvironmentVariables:
+        S3_OBSERVER_DEAD_LETTER_BUCKET:
+          Ref: ObserverDeadLetterBucket
+        S3_OBSERVER_DEAD_LETTER_REGION: !Sub '${AWS::Region}'
+        SLGL_QLDB_LEDGER:
+          Ref: SlglQldbLedger
+        USER_DATA_DYNAMO_DB_TABLE:
+          Ref: UserDataDynamoDbTable
+        SLGL_SNS_TOPIC:
+          Ref: SlglSnsTopic
+
+  SlglQldbLedger:
+    Type: AWS::QLDB::Ledger
+    Properties:
+      DeletionProtection: false
+      PermissionsMode: ALLOW_ALL
+  UserDataDynamoDbTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+
+  SlglKinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 1
+      RetentionPeriodHours: 168
+  SlglKinesisStreamConsumer:
+    Type: AWS::Kinesis::StreamConsumer
+    Properties:
+      ConsumerName: !Sub '${AWS::StackName}-slgl-kinesis-stream-consumer'
+      StreamARN: !GetAtt SlglKinesisStream.Arn
+  SlglKinesisStreamRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - qldb.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'kinesis:PutRecord*'
+                  - 'kinesis:DescribeStream'
+                  - 'kinesis:ListShards'
+                Resource: !GetAtt SlglKinesisStream.Arn
+  SlglQldbStream:
+    Type: AWS::QLDB::Stream
+    Properties:
+      StreamName: 'slgl-qldb-stream'
+      LedgerName: !Ref SlglQldbLedger
+      InclusiveStartTime: '2020-07-31T00:00:00Z'
+      KinesisConfiguration:
+        AggregationEnabled: true
+        StreamArn: !GetAtt SlglKinesisStream.Arn
+      RoleArn: !GetAtt SlglKinesisStreamRole.Arn
+  StreamProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./lambda/stream_processor
+      Handler: io.slgl.streamprocessor.LambdaHandler::handleRequest
+      Runtime: java11
+      MemorySize: 512
+      Environment:
+        Variables:
+          SLGL_SNS_TOPIC:
+            Ref: SlglSnsTopic
+      Events:
+        Stream:
+          Type: Kinesis
+          Properties:
+            Stream: !GetAtt SlglKinesisStreamConsumer.ConsumerARN
+            BatchSize: 100
+            StartingPosition: LATEST
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sns:Publish'
+              Resource:
+                Ref: SlglSnsTopic
+
+  SlglSnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-slgl-sns-topic'
+  SnsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    DependsOn: SlglSnsTopic
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - 'sns:Subscribe'
+            Resource:
+              !Ref SlglSnsTopic
+      Topics:
+        - !Ref SlglSnsTopic
+  AuditorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ['sts:AssumeRole']
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AuditorAllowedAwsAccount}:root"
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: AuditorRoleAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - 'cloudformation:ListStackResources'
+                  - 'lambda:GetFunction'
+                  - 'lambda:GetFunctionEventInvokeConfig'
+                  - 'cloudwatch:GetMetricData'
+                  - 'cloudwatch:GetMetricStatistics'
+                  - 'logs:FilterLogEvents'
+                  - 'codepipeline:GetPipeline'
+                  - 'codepipeline:ListPipelineExecutions'
+                  - 'codepipeline:ListActionExecutions'
+                  - 'qldb:ListLedgers'
+                  - 'lambda:GetAlias'
+                  - 'codepipeline:GetPipelineExecution'
+                  - 'codebuild:BatchGetProjects'
+                  - 'codebuild:BatchGetBuilds'
+                  - 'cloudformation:DetectStackDrift'
+                Effect: Allow
+                Resource: '*'
+        - PolicyName: ProwlerAdditionalPermissions
+          PolicyDocument:
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+              {
+                "Action": [
+                  "access-analyzer:List*",
+                  "apigateway:get*",
+                  "apigatewayv2:get*",
+                  "aws-marketplace:viewsubscriptions",
+                  "batch:listjobs",
+                  "clouddirectory:listappliedschemaarns",
+                  "clouddirectory:listdevelopmentschemaarns",
+                  "clouddirectory:listpublishedschemaarns",
+                  "cloudformation:list*",
+                  "cloudhsm:listavailablezones",
+                  "cloudsearch:list*",
+                  "cloudwatch:get*",
+                  "cloudwatch:list*",
+                  "codebuild:listbuilds*",
+                  "codestar:verify*",
+                  "cognito-identity:listidentities",
+                  "cognito-idp:list*",
+                  "cognito-sync:listdatasets",
+                  "connect:list*",
+                  "datapipeline:getaccountlimits",
+                  "dax:describeclusters",
+                  "dax:describedefaultparameters",
+                  "dax:describeevents",
+                  "dax:describeparametergroups",
+                  "dax:describeparameters",
+                  "dax:describesubnetgroups",
+                  "dax:describetable",
+                  "dax:listtables",
+                  "devicefarm:list*",
+                  "discovery:list*",
+                  "dms:list*",
+                  "ds:ListAuthorizedApplications",
+                  "ds:DescribeRoles",
+                  "dynamodb:describebackup",
+                  "dynamodb:describeglobaltablesettings",
+                  "dynamodb:describelimits",
+                  "dynamodb:describereservedcapacity",
+                  "dynamodb:describereservedcapacityofferings",
+                  "dynamodb:describestream",
+                  "dynamodb:listtagsofresource",
+                  "ec2:get*",
+                  "ecr:describe*",
+                  "ecr:listimages",
+                  "elasticbeanstalk:listavailablesolutionstacks",
+                  "elasticmapreduce:list*",
+                  "elastictranscoder:list*",
+                  "gamelift:list*",
+                  "glacier:list*",
+                  "importexport:listjobs",
+                  "lex:getbotaliases",
+                  "lex:getbotchannelassociations",
+                  "lex:getbots",
+                  "lex:getbotversions",
+                  "lex:getintents",
+                  "lex:getintentversions",
+                  "lex:getslottypes",
+                  "lex:getslottypeversions",
+                  "lex:getutterancesview",
+                  "lightsail:getblueprints",
+                  "lightsail:getbundles",
+                  "lightsail:getinstancesnapshots",
+                  "lightsail:getkeypair",
+                  "lightsail:getregions",
+                  "lightsail:getstaticips",
+                  "lightsail:isvpcpeered",
+                  "machinelearning:describe*",
+                  "mobilehub:listavailablefeatures",
+                  "mobilehub:listavailableregions",
+                  "mobilehub:listprojects",
+                  "mobiletargeting:getapplicationsettings",
+                  "mobiletargeting:getcampaigns",
+                  "mobiletargeting:getimportjobs",
+                  "mobiletargeting:getsegments",
+                  "opsworks-cm:describe*",
+                  "opsworks:describe*",
+                  "polly:describe*",
+                  "polly:list*",
+                  "redshift:viewqueriesinconsole",
+                  "route53domains:list*",
+                  "s3:listbucket",
+                  "sdb:list*",
+                  "secretsmanager:listsecretversionids",
+                  "servicecatalog:list*",
+                  "ses:list*",
+                  "ses:sendemail",
+                  "sns:list*",
+                  "sqs:listqueuetags",
+                  "ssm:listassociations",
+                  "states:listactivities",
+                  "support:describe*",
+                  "swf:list*",
+                  "tag:gettagkeys",
+                  "trustedadvisor:describe*",
+                  "waf-regional:list*",
+                  "waf:list*",
+                  "workdocs:describeavailabledirectories",
+                  "workdocs:describeinstances",
+                  "workmail:describe*"
+                ],
+                "Effect": "Allow",
+                "Resource": "*"
+              }
+              ]
+            }
+
+Conditions:
+  UseDefaultAdminApiKey: !Equals [ !Ref AdminApiKey, "" ]
+  IntegrationTestsResourcesEnabled: !Equals [ !Ref IncludeIntegrationTestsResources, "true" ]
+  ExportJournalEnabled: !Equals [ !Ref IncludeJournalExport, "true" ]
+  SetupDevUserAccess: !Not [!Equals [ !Ref DevUser, "" ]]
+  SetupDevRoleAccess: !Not [!Equals [ !Ref DevIamRole, "" ]]
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL for Prod stage for SLGL"
+    Value: !Sub "https://${SecuredApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+    Export:
+      Name: !Sub '${AWS::StackName}:ApiUrl'
+  SlglApiFunction:
+    Description: "SLGL Lambda Function ARN"
+    Value: !GetAtt SlglApiFunction.Arn
+  SlglApiFunctionIamRole:
+    Description: "Implicit IAM Role created for SLGL function"
+    Value: !GetAtt SlglApiFunctionRole.Arn
+  SlglSnsTopicArn:
+    Value: !Ref SlglSnsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}:SlglSnsTopicArn'
+  AdminUsername:
+    Value: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+  DefaultAdminApiKey:
+    Value: !GetAtt SetupResource.DefaultAdminApiKey
+    Export:
+      Name: !Sub '${AWS::StackName}:DefaultAdminApiKey'
+    Condition: UseDefaultAdminApiKey
+  ObserverDeadLetterBucket:
+    Description: "Observers Dead Letter bucket name"
+    Value: !Sub '${ObserverDeadLetterBucket}'
+  ObserverDeadLetterBucketRegion:
+    Description: "Region for Observers Dead Letter bucket AWS Client"
+    Value: !Sub '${AWS::Region}'
+  ExportJournalBucket:
+    Description: "Bucket to which SLGL exports QLDB jurnal"
+    Value: !Sub '${ExportJournalBucket}'
+    Export:
+      Name: !Sub '${AWS::StackName}:ExportJournalBucket'
+  TestAuditorSqsQueue:
+    Condition: IntegrationTestsResourcesEnabled
+    Description: "SQS Queue ARN used for auditor tests"
+    Value: !Ref TestAuditorSqsQueue
+  TestObserverStorageS3Bucket:
+    Condition: IntegrationTestsResourcesEnabled
+    Description: "S3 bucket used for observers tests"
+    Value: !Ref TestObserverStorageS3Bucket
+  TestStateStorageS3Bucket:
+    Condition: IntegrationTestsResourcesEnabled
+    Description: "S3 bucket used for state tests"
+    Value: !Ref TestStateStorageS3Bucket
+  TrustListCacheBucket:
+    Description: "S3 bucket used Caching Trust List"
+    Value: !Ref TrustListCacheBucket

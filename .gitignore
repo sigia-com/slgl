@@ -1,0 +1,16 @@
+local-vars.json
+*.iml
+.idea
+
+.gradle
+build
+out
+
+.aws-sam
+packaged.yaml
+
+.DS_Store
+
+.local
+/infrastructure/deploy/deployment_pipeline_generated.yml
+/template-export.yml

@@ -1,0 +1,18 @@
+{
+  "@type": "ce6b07da-96d5-4c09-8659-e9e806dfe1c1",
+  "anchors": [
+    {
+      "id": "#observers",
+      "type": "01c3d684-0139-4721-bf7f-d2e93b767dda"
+    },
+    {
+      "id": "#auditors",
+      "type": "78f4b8d1-0410-48af-a673-7027b21c5d3f",
+      "max_size": 1
+    },
+    {
+      "id": "#fake",
+      "type": "65b01b83-cc1c-4886-b6f7-d516400db391"
+    }
+  ]
+}

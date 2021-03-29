@@ -1,0 +1,23 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  IamAccessAnalyzer:
+    Type: 'AWS::AccessAnalyzer::Analyzer'
+    Properties:
+      AnalyzerName: !Sub ${AWS::StackName}
+      Type: ACCOUNT
+      ArchiveRules:
+        -   Filter:
+            -   Eq:
+                - arn:aws:iam::181980779426:role/jenkins_slaves
+                - arn:aws:iam::174706592265:user/szymon.swiecki
+                - arn:aws:iam::181980779426:user/szymon.swiecki
+                Property: principal.AWS
+            -   Contains:
+                - arn:aws:s3:::securionpay-releases
+                Property: resource
+            RuleName: ArchiveTrustedAccountAccess
+        -   Filter:
+            -   Contains:
+                - arn:aws:s3:::securionpay-bs-*-public
+                Property: resource
+            RuleName: ArchivePublicS3BucketsAccess

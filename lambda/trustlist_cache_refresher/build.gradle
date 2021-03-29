@@ -1,0 +1,19 @@
+plugins {
+    id 'java'
+}
+
+dependencies {
+    implementation project(':lambda:api')
+
+    // AWS SDK
+    implementation 'com.amazonaws:aws-lambda-java-events:2.2.7'
+    implementation 'com.amazonaws:aws-lambda-java-core:1.2.1'
+
+    // DSS
+    implementation 'eu.europa.ec.joinup.sd-dss:dss-service:5.8'
+    implementation 'eu.europa.ec.joinup.sd-dss:specs-trusted-list:5.8'
+
+    // MISC
+    compileOnly 'org.projectlombok:lombok:1.18.10'
+    annotationProcessor 'org.projectlombok:lombok:1.18.10'
+}
