@@ -9,8 +9,9 @@ java {
 }
 
 dependencies {
-    api project(':lib:slgl_client')
     compileOnly project(':lib:template')
+
+    api 'io.slgl:slgl-java:1.0.0'
 
     implementation 'org.slf4j:slf4j-api:1.7.28';
     implementation 'io.github.jamsesso:json-logic-java:1.0.3'

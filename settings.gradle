@@ -6,5 +6,4 @@ include ':lambda:stream_processor'
 include ':lambda:trustlist_cache_refresher'
 
 include ':lib:permission'
-include ':lib:slgl_client'
 include ':lib:template'

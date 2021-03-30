@@ -5,9 +5,10 @@ plugins {
 apply from: "../../gradle/integrationTest.gradle"
 
 dependencies {
-    implementation project(':lib:slgl_client')
     implementation project(':lib:permission')
     implementation project(':lib:template')
+
+    implementation 'io.slgl:slgl-java:1.0.0'
 
     // AWS SDK
     implementation platform('software.amazon.awssdk:bom:2.14.4')
