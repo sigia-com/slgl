@@ -16,7 +16,7 @@ Parameters:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: "Use for developement purouses - eg. Integration tests"
+    Description: "Use for development purposes - e.g. Integration tests"
   IncludeJournalExport:
     Type: String
     AllowedValues: ["true", "false"]
@@ -287,7 +287,7 @@ Resources:
 
   TrustListCacheRefreshFunction:
     Type: AWS::Serverless::Function
-    Description: "Function updates Trust List Cache periodically and store output in S3"
+    Description: "Function updates Trust List Cache periodically and stores the output in S3"
     Properties:
       CodeUri: ./lambda/trustlist_cache_refresher
       Handler: io.slgl.trustlistrefresher.TLCacheRefresherLambdaHandler::handleRequest
@@ -322,7 +322,7 @@ Resources:
 
   SetupFunction:
     Type: AWS::Serverless::Function
-    Description: "Function configures QLDB eg configure indexes"
+    Description: "Function configures QLDB e.g. configure indexes"
     Properties:
       CodeUri: ./lambda/setup
       Handler: io.slgl.setup.LambdaHandler::handleRequest
@@ -712,7 +712,7 @@ Outputs:
     Description: "Region for Observers Dead Letter bucket AWS Client"
     Value: !Sub '${AWS::Region}'
   ExportJournalBucket:
-    Description: "Bucket to which SLGL exports QLDB jurnal"
+    Description: "Bucket to which SLGL exports QLDB journal"
     Value: !Sub '${ExportJournalBucket}'
     Export:
       Name: !Sub '${AWS::StackName}:ExportJournalBucket'
@@ -729,5 +729,5 @@ Outputs:
     Description: "S3 bucket used for state tests"
     Value: !Ref TestStateStorageS3Bucket
   TrustListCacheBucket:
-    Description: "S3 bucket used Caching Trust List"
+    Description: "S3 bucket used for Caching Trust List"
     Value: !Ref TrustListCacheBucket

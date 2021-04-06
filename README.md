@@ -2,13 +2,13 @@
 
 ### Introduction
 
-The purpose of SLGL (Smart Limpid Graph Ledger) is to provide smart contract functionality on top of AWS QLDB so that they can be trusted by everyone, not just by the AWS account owner. This repository contains source code which can be used to create a full AWS stack with a fully functional solution.
+The purpose of SLGL (Smart Limpid Graph Ledger) is to provide smart contract functionality on top of AWS QLDB so that they can be trusted by everyone, not just by the AWS account owner. This repository contains source code that can be used to create a full AWS stack with a fully functional solution.
 
-To achieve the smart contract part, SLGL delivers a web service which allows to create nodes and link/unlink them. A node can be linked to another node’s anchor, and every anchor can define conditions which need to be met when linking. By properly defining a set of nodes and its anchors it is possible to model a smart contract.
+To achieve the smart contract part, SLGL delivers a web service that allows creating nodes and link/unlink them. A node can be linked to another node’s anchor, and every anchor can define conditions that need to be met when linking. By properly defining a set of nodes and its anchors it is possible to model a smart contract.
 
 To achieve the trust part:
 1. the project is open source and includes both scripts to build the AWS stack and source code of all the AWS lambdas
-2. every significant release will be verified by a trusted organization, which certifies that actual code is working as we describe it here
+2. every significant release will be verified by a trusted organization, which certifies that the actual code is working as we describe it here
 3. users deploying SLGL on their AWS account are advised to widely provide access to the "audit" IAM role, preferably this access should be easily available for everyone using that SLGL
 4. it is advised for an AWS account owner not to use root access and use IAM roles for different functions instead; every root login is reported and can be seen in the audit mode
 5. highly certified AWS QLDB is used as a blockchain database, and QLDB journal is published in a publicly available and replicable S3 bucket within an average of 5 minutes
@@ -16,7 +16,7 @@ To achieve the trust part:
 
 ## How to deploy
 
-Latest version of SLGL can be easly deployed on your AWS account. All you need to do is to login into your [AWS console](https://console.aws.amazon.com/) and click the button below:
+The latest version of SLGL can be easily deployed on your AWS account. All you need to do is to login into your [AWS console](https://console.aws.amazon.com/) and click the button below:
 
 [![Launch SLGL Stack](https://cdn.rawgit.com/buildkite/cloudformation-launch-stack-button-svg/master/launch-stack.svg)](https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1#/stacks/create/review?templateURL=https://s3.eu-west-1.amazonaws.com/slgl-artifact-github-bucket/latest/template-export.yml&stackName=slgl)
 
@@ -27,8 +27,8 @@ More information about deploying SLGL can be found in [infrastructure documentat
 
 Everything needed to access SLGL API can be found in outputs of SLGL stack.
 
-Newly created stack is initialized with single admin user. Username and API key for that admin user can be found in outputs `AdminUsername` and `DefaultAdminApiKey`. 
-URL needed to access API can be found in output `ApiUrl`.
+A newly created stack is initialized with a single admin user. Username and API key for that admin user can be found as the outputs `AdminUsername` and `DefaultAdminApiKey`. 
+URL needed to access API can be found as the output `ApiUrl`.
 
 Request to SLGL API can be made using any software capable of doing HTTP REST requests.
 
@@ -39,7 +39,7 @@ curl <API_URL> -u <USERNAME>:<API_KEY> -H 'Content-Type: application/json' -d '<
 
 ### Create simple node
 
-Creating new node is SLGL is very simple:
+Creating a new node in SLGL is very simple:
 
 ```bash
 curl <API_URL> -u <USERNAME>:<API_KEY> -H 'Content-Type: application/json' \
@@ -53,7 +53,7 @@ curl <API_URL> -u <USERNAME>:<API_KEY> -H 'Content-Type: application/json' \
 }'
 ```
 
-Executing that request results in following response:
+Executing that request results in the following response:
 ```json
 {
   "responses": [
@@ -69,11 +69,11 @@ Executing that request results in following response:
 }
 ```
 
-Field `@id` in that response is identifier of newly created node. Field `object_sha3` is hash that can be used to prove what data were send in request.
+Field `@id` in that response is an identifier of the newly created node. Field `object_sha3` is a hash that can be used to prove what data were sent in the request.
 
-All public information saved in SLGL (this includes information about node created by above example) is stored in AWS QLDB. This guarantees that data stored in SLGL can't be changed without everyone noticing it.
+All public information saved in SLGL (this includes information about the node created by the above example) is stored in AWS QLDB. This guarantees that data stored in SLGL can't be changed without everyone noticing it.
 
-You can easily verify data stored by SLGL in AWS QLDB, because SLGL automatically exports all data from QLDB to S3. Name of the S3 bucket used for that export can be found in stack output `ExportJournalBucket`. 
+You can easily verify data stored by SLGL in AWS QLDB, because SLGL automatically exports all data from QLDB to S3. The name of the S3 bucket used for that export can be found in stack output `ExportJournalBucket`. 
 
 ### More examples
 
@@ -82,7 +82,7 @@ You can easily verify data stored by SLGL in AWS QLDB, because SLGL automaticall
 
 ## Repository structure
 
-This repository has following structure:
+This repository has the following structure:
 
 Directory | Description
 ----------|------------
@@ -98,11 +98,11 @@ Directory | Description
 `/infrastructure` | `[TODO write me]`
 `/tests` | `[TODO do we need this?]`
 
-## How to build and deploy development environment
+## How to build and deploy a development environment
 
 ### Prerequirements
 
-You must install following software if you want to be able to build SLGL: 
+To build SLGL, you need to install the following software: 
 
 * Java 11
 * NodeJS 10
@@ -142,27 +142,27 @@ sam deploy \
     IncludeExportJournal=false DevUser=<NAME_OF_YOUR_AWS_USER>
 ```
 
-This command will create new AWS CloudFormation stack. The same command can also be used to update existing stack.
-As a result all required AWS resources (like lambdas or QLDB ledger) will be created and initial setup of that resources will be performed.
+This command will create a new AWS CloudFormation stack. The same command can also be used to update the existing stack.
+As a result, all required AWS resources (like lambdas or QLDB ledger) will be created and an initial setup of that resources will be performed.
 
-Last two lines of that command contains configuration parameters.
-Setting `IncludeIntegrationTestsResources` to `true` will result in creation of some additions resources that are required to run integration tests.
-You should also provide user name (via `DevUser`) or role name (via `DevRole`) that you will use to run integration tests - this will ensure all required permissions will be granted to that user (or role).  
+The last two lines of that command contain configuration parameters.
+Setting `IncludeIntegrationTestsResources` to `true` will result in the creation of some additional resources that are required to run integration tests.
+You should also provide a username (via `DevUser`) or role name (via `DevRole`) that you will use to run integration tests - this will ensure all required permissions will be granted to that user (or role).  
 
 ### Running integration tests
 
-To run integration tests you can use following command:
+To run integration tests you can use the following command:
 
 ```bash
 ./gradlew integrationTest -Ddev.slgl.stackName=<NAME_OF_SLGL_STACK>
 ```
 
-No configuration is required here - you only need to provide name of CloudFormation stack where SLGL was deployed.
-All necessary information (like URL of SLGL API) will be automatically extracted from stack outputs.
+No configuration is required here - you only need to provide the name of CloudFormation stack where SLGL was deployed.
+All necessary information (like the URL of SLGL API) will be automatically extracted from stack outputs.
 
 ### Cleanup
 
-To delete deployed SLGL stack and the bucket that you created, use following commands:
+To delete the deployed SLGL stack and the bucket that you created, use the following commands:
 
 ```bash
 aws cloudformation delete-stack --stack-name <NAME_OF_SLGL_STACK>
