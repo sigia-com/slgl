@@ -52,7 +52,6 @@ public class TrustListManagementService {
     private final TLValidationJob tlValidationJob;
     private final ZipCacheDSSFileLoader loader;
     private final boolean online;
-    private final S3Client s3Client = ExecutionContext.get(S3Client.class);
     private Instant lastS3Reloaded;
     private Map<String, DSSZipCacheEntry> lastCacheSnapshot;
 
@@ -116,6 +115,7 @@ public class TrustListManagementService {
                     .key(LambdaEnv.DssCache.getTrustListCacheZipS3Key())
                     .build();
             var bytes = loader.toByteArray();
+            S3Client s3Client = S3Client.builder().build();
             s3Client.putObject(request, RequestBody.fromBytes(bytes));
             lastCacheSnapshot = loader.currentSnapshot();
             log.info("Zipped cache exported to s3");
@@ -131,6 +131,7 @@ public class TrustListManagementService {
                 .ifModifiedSince(lastS3Reloaded)
                 .build();
         try (
+                S3Client s3Client = S3Client.builder().build();
                 var response = s3Client.getObject(request);
                 var zipInput = new ZipInputStream(response)
         ) {
